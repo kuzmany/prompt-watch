@@ -34,6 +34,33 @@ Flags: `--yes` (no questions), `--key M-r` (different picker key),
 `--ctrl-g` (exact-copy alias, see below), `--uninstall` (clean removal).
 Needs tmux and bash ≥ 4.2 (macOS: `brew install bash`).
 
+### Let your agent install it
+
+Paste this into Claude Code, Codex CLI, Grok CLI, or any terminal agent —
+it installs prompt-watch and proves it works before it says it is done:
+
+```text
+Install prompt-watch from https://github.com/kuzmany/prompt-watch — it snapshots
+the prompt box of AI agent panes in tmux so an unsent prompt survives a crash.
+
+1. Check the prerequisites first: `tmux -V` (any version with popups, 3.2+) and
+   `bash --version` (need 4.2+). Say so and stop if either is missing.
+2. Read https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh
+   before running anything, and tell me what it changes. Then install with:
+   `curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash -s -- --yes`
+   Append `--ctrl-g` to that command only if I use Claude Code and want Ctrl+G
+   to copy the exact prompt buffer (it adds one alias to my shell rc).
+3. Run `~/.local/bin/prompt-watch doctor` and show me the output. Every line
+   must be ok or info. If the daemon line says it is not running, run
+   `~/.local/bin/prompt-watch ensure`, wait a second, and check again.
+4. Tell me the picker key it installed (Alt+G by default) and how to change it.
+   Do not modify my tmux config by hand — the installer owns that block.
+5. If `~/.local/bin` is not on my PATH, tell me the exact line to add.
+
+Then stop. Do not start the picker for me: it is interactive and I will press
+Alt+G myself.
+```
+
 ## Use
 
 You learn two gestures:
