@@ -116,8 +116,12 @@ parse_box_claude() {
 
 	while [[ $out == *$'\n' ]]; do out=${out%$'\n'}; done
 	[[ -z $out ]] && return 1
-	# Hints Claude Code draws on the ❯ line when the box is otherwise empty.
+	# Hints Claude Code draws on the ❯ line when the box is otherwise empty:
+	# the queued-messages note, and the rotating `Try "..."` placeholder. Both
+	# look exactly like typed text to capture-pane. Matching the whole draft
+	# keeps a real prompt that merely starts with Try "..." recoverable.
 	[[ $out == "Press up to edit queued messages" ]] && return 1
+	[[ $out == 'Try "'*'"' && $out != *$'\n'* ]] && return 1
 	printf '%s' "$out"
 }
 
@@ -371,9 +375,10 @@ picker() {
 	# Never draw more rows than the window has lines - one row of overflow
 	# scrolls the screen and every relative cursor move after that is off.
 	# stty, not tput: inside tmux, `tput lines` reports terminfo's default 24.
-	local rows
-	rows=$({ { stty size </dev/tty; } 2>/dev/null || echo "24 80"; } | awk '{print $1}')
+	local rows cols
+	read -r rows cols < <({ stty size </dev/tty; } 2>/dev/null || echo "24 80")
 	[[ $rows =~ ^[0-9]+$ ]] || rows=24
+	[[ $cols =~ ^[0-9]+$ ]] || cols=80
 	local avail=$((rows - 1))
 	((avail < 1)) && avail=1
 	if ((${#files[@]} > avail)); then
@@ -394,6 +399,12 @@ picker() {
 		if [[ $seg == p* ]]; then pane="%${seg#p}"; else pane="%${seg:6}"; fi
 		pane=${PANEMAP[$pane]:-$pane}
 		printf -v "labels[$i]" '%(%m-%d %H:%M)T  %-16.16s %s' "${mts[i]}" "$pane" "${line:0:58}"
+		# Clip to the window: a row wider than the terminal wraps, which breaks
+		# the highlight and pushes the hint line off screen. 7 columns cover the
+		# ' %2d  ' index prefix and the trailing space of the selected row.
+		local max=$((cols - 7))
+		((max < 20)) && max=20
+		labels[i]=${labels[i]:0:max}
 	done
 
 	draw() {

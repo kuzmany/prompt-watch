@@ -2,12 +2,22 @@
 
 **Prompts, back from the dead.**
 
+![A lifeguard running into the surf to rescue a drowning terminal window](docs/media/prompt-watch-hero.jpg)
+
+[![ci](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![bash](https://img.shields.io/badge/bash-%E2%89%A5%204.2-lightgrey)
+![tmux](https://img.shields.io/badge/needs-tmux-brightgreen)
+
 Terminal AI agents never write the prompt you are typing to disk. Kill the
 pane, crash the process, hit Ctrl+C at the wrong moment — a 500-word prompt
-is gone. prompt-watch snapshots the prompt box of every agent pane in tmux
-every 10 seconds, so a crash costs you nothing.
+is gone. prompt-watch is the lifeguard on that beach: it snapshots the prompt
+box of every agent pane in tmux every 10 seconds, so a crash costs you nothing.
 
-*(demo GIF coming: type a long prompt, kill the pane, Alt+G, prompt back)*
+![Typing a long prompt in Claude Code, the process dies, Alt+G opens the picker, Enter puts the draft back](docs/media/demo.gif)
+
+*Type a long prompt, the agent dies, Alt+G, Enter — the draft is back. Real
+Claude Code, real recovery; only the agent's boot time is trimmed.*
 
 Works with **Claude Code** and **Codex CLI**. The gap is real across all
 agent CLIs: none of them persist the unsent prompt
@@ -77,6 +87,8 @@ Adding an agent is one process-name row plus one composer parser
 - Pasted blocks render as `[Pasted text #N]`, so scraping cannot recover
   them (Claude Code keeps the bytes in `~/.claude/paste-cache/`).
 - Claude Code's dim ghost suggestions can be captured as if you typed them.
+  Its empty-box placeholders (`Press up to edit…`, the rotating `Try "…"`) are
+  filtered out; inline completions still look like typed text to a screen read.
 - Drafts are plaintext — same exposure as your shell history.
 
 ## Config
@@ -96,13 +108,6 @@ Adding an agent is one process-name row plus one composer parser
 Hidden commands for scripts: `prompt-watch list [N]`, `show N`, `copy [N]`.
 
 </details>
-
-## Prior art
-
-[Lua2147/claude-toolkit-catalog](https://github.com/Lua2147/claude-toolkit-catalog)
-ships a capture-pane watcher with grep-based recovery — the only other tool
-we found that goes after the *unsent* buffer. Everything else reads
-`history.jsonl`, i.e. prompts you already sent.
 
 ## License
 

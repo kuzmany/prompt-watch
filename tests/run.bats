@@ -115,3 +115,14 @@ setup() {
 	run "$PW" doctor
 	[[ $output == *bash* ]]
 }
+
+@test "claude: rotating Try \"...\" placeholder rejected" {
+	run "$PW" __parse claude <"$FIX/claude-placeholder.txt"
+	[ "$status" -ne 0 ]
+}
+
+@test "claude: a real draft that starts with Try \"...\" still recovers" {
+	run "$PW" __parse claude <"$FIX/claude-try-prefix.txt"
+	[ "$status" -eq 0 ]
+	[ "$output" = 'Try "refactor" and then rewrite the parser' ]
+}
