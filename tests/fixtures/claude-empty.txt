@@ -1,0 +1,32 @@
+  ├────────┼────────────────────────────────────────────────────────────────────────────┤
+  │ 29. 8. │ Sedem mien v Michalovciach. Osem strán za jedným menom v Košiciach         │
+  ├────────┼────────────────────────────────────────────────────────────────────────────┤
+  │ 30. 8. │ Osem protestov proti volebným mapám. Opraviť ich treba do konca septembra  │
+  └────────┴────────────────────────────────────────────────────────────────────────────┘
+
+  Kontroly: 81 tvrdení naprieč celým archívom, 0 bez zhody (6 zhôd len na kmeni = slovenské skloňovanie). Audity pokrytia s ôsmimi krajmi pre všetkých päť nových dní. report:approve --check
+  prechádza pre všetkých desať, validate:full prešiel, dist/ v produkčnom režime. V prehliadači každý deň: noindex, nofollow, obrázok 1248×832 = prirodzené rozmery, presah 0.
+
+  Karikatúry: päť zátiší bez postáv, každé s jedným červeným bodom. Každú kontroloval v čerstvom kontexte iný agent — všetkých päť PASS. Tri verzie cestou padli a sú v media/image/rejected/: v
+  ľavej priehradke bol stoh namiesto jedného hárku, na stene presvitala stránka pseudo-textu, a v zasadačke nesedel počet stoličiek.
+
+  Dve veci mimo plánu
+
+  Opravil som chybu v scripts/verify-sources.mjs: generátor variantov dátumu emitoval len nulou doplnený mesiac, takže formát STVR 30. 8. 2026 hlásil ako nezhodu, hoci v prameni bol. Teraz emituje
+  obe podoby. Bez toho by 30. august neprešiel schvaľovacou kontrolou z falošného dôvodu.
+
+  Dva dni sú zámerne v suchom variante pre slabý deň. 29. august mal dva overené pôvody, 30. august jediný — obidva reporty to hovoria priamo v texte. Z Denníka N som na 29. augusta nezaradil dve
+  nájdené správy, lebo sa mi nepodarilo otvoriť pôvodnú stránku a overiť čas prvého vydania; je to zapísané v audite.
+
+  Ďalej podľa tvojho poradia zostáva GA4 pred spustením a potom nasadenie. Schválenie som nespúšťal pre žiadny deň — čaká na tvoje výslovné potvrdenie dvojíc dátum + obrázok, hashe sú v
+  manifestoch v research/.
+
+✻ Sautéed for 55m 29s · done 3:04 PM
+                                                                                                                                                            new task? /clear to save 631.7k tokens
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── example ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ad· an ad line that was on screen  https://example.com/                                   /rc
+  [CAVE:ULTRA] example
+  [#00000000 example | Opus 5 | xhigh | think | voice | 63% | claude:user@example.com] 5h:13%(2h10m) 7d:6%(6d18h)
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

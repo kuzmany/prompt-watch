@@ -1,0 +1,17 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck bin/prompt-watch install.sh tests/e2e.sh
+      - name: bats
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q bats
+          bats tests/run.bats

@@ -1,0 +1,7 @@
+some earlier output
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ first line of a multi-line claude draft that keeps going
+  second line of the draft after a newline
+  third line ends here
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  status line below

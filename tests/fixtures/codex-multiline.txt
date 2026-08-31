@@ -1,0 +1,29 @@
+│ model:       loading   /model to change      │
+│ directory:   ~/projects/example │
+│ permissions: YOLO mode                       │
+╰──────────────────────────────────────────────╯
+
+⚠ Ignored invalid status line item: "thread".
+
+╭───────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.151.0)                        │
+│                                                   │
+│ model:       gpt-5.6-sol xhigh   /model to change │
+│ directory:   ~/projects/example      │
+│ permissions: YOLO mode                            │
+╰───────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+⚠ The cloudflare-api MCP server is not logged in. Run `codex mcp login cloudflare-api`.
+
+⚠ The cloudflare-builds MCP server is not logged in. Run `codex mcp login cloudflare-builds`.
+
+⚠ MCP startup incomplete (failed: cloudflare-api, cloudflare-builds)
+
+
+› This is a long test draft for the prompt-watch parser, it should wrap across at least two screen lines to show how the codex composer
+  renders continuation rows in the box
+  second paragraph after a newline
+
+  ~/projects/example · main · 00000000-0000-0000-0000-000000000000 · gpt-5.6-sol xhigh · Context 100% left · 5h 33% left · we…

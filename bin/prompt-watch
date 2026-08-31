@@ -1,0 +1,638 @@
+#!/usr/bin/env bash
+# prompt-watch — Prompts, back from the dead.
+#
+# Terminal AI agents (Claude Code, Codex CLI) never write the prompt you are
+# typing to disk. If the process dies, the pane closes, or you hit Ctrl+C,
+# that text is gone. prompt-watch snapshots the prompt box of every agent
+# pane in tmux every few seconds, so a crash costs you nothing.
+#
+#   prompt-watch            choose from the 10 most recent, Enter inserts it back
+#   prompt-watch 40         choose from the 40 most recent
+#   prompt-watch copy       copy the draft currently in the prompt box
+#   prompt-watch copy N     copy stored draft N (1 = newest) to the clipboard
+#   prompt-watch doctor     check that everything is wired up
+#
+# In the picker: 1-9 pick a row, up/down move, Enter inserts the draft into
+# the pane you came from, c copies it instead, q quits. Alt+G (installed
+# tmux binding) opens the picker in a popup from anywhere.
+#
+# Hidden but stable: list [N], show N, daemon, ensure, visual, version.
+# Config via env: PW_DIR, PW_INTERVAL (10s), PW_KEEP (200 drafts),
+# PW_IDLE (600s), PW_MINLEN (15 chars), PW_SCAN (30 drafts).
+
+# ls -1t is deliberate everywhere: draft filenames are self-generated
+# (YYYYMMDD-HHMMSS-pNN.txt, never spaces or newlines) and mtime order is the
+# whole point. find has no portable mtime sort.
+# shellcheck disable=SC2012
+
+set -uo pipefail
+
+VERSION="0.1.0"
+
+dir=${PW_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/prompt-watch}
+interval=${PW_INTERVAL:-10}
+keep=${PW_KEEP:-200}
+idle=${PW_IDLE:-600}
+minlen=${PW_MINLEN:-15}
+scan=${PW_SCAN:-30}
+
+NB=$'\xc2\xa0' # the non-breaking space Claude Code puts after the prompt marker
+CLAUDE_RULE='──────────'
+
+SELF=$(readlink -f "$0" 2>/dev/null) || SELF=$0
+
+# ---------------------------------------------------------------- agents ----
+
+# Map a pane's current command to an agent id. Prefix-match where a binary
+# name may carry a version suffix; verified live: claude -> "claude",
+# codex standalone build -> "codex".
+agent_of() {
+	case $1 in
+	claude) printf claude ;;
+	codex | codex-*) printf codex ;;
+	*) return 1 ;;
+	esac
+}
+
+# Extract the prompt box from a captured pane for one agent. Prints the
+# draft, or fails. Each agent's TUI draws a different composer, so each gets
+# its own parser; add a new agent by adding a parser and an agent_of() row.
+parse_box() {
+	case ${2:-claude} in
+	claude) parse_box_claude "$1" ;;
+	codex) parse_box_codex "$1" ;;
+	*) return 1 ;;
+	esac
+}
+
+# Claude Code: the box is the region between the last two horizontal-rule
+# runs and always opens with the ❯ marker plus a non-breaking space;
+# continuation rows indent two spaces. Runs of rule lines collapse into one
+# border so a rule that soft-wraps does not read as an empty box.
+parse_box_claude() {
+	local -a lines=()
+	local line
+	while IFS= read -r line; do lines+=("$line"); done <<<"$1"
+
+	local -a bstart=() bend=()
+	local i n=${#lines[@]} inrun=0
+	for ((i = 0; i < n; i++)); do
+		if [[ ${lines[i]} == *"$CLAUDE_RULE"* ]]; then
+			((inrun)) || { bstart+=("$i"); inrun=1; }
+			bend[${#bstart[@]} - 1]=$i
+		else
+			inrun=0
+		fi
+	done
+
+	local nb=${#bstart[@]}
+	((nb < 2)) && return 1
+	local first=$((bend[nb - 2] + 1)) last=${bstart[nb - 1]}
+	((first >= last)) && return 1
+
+	# The box always opens with the ❯ marker. Without it these are some other
+	# pair of rules - a dialog border, or a rule inside ordinary output.
+	local head=${lines[first]}
+	head=${head#"${head%%[! ]*}"}
+	[[ $head == ❯* ]] || return 1
+
+	local out="" s j
+	for ((j = first; j < last; j++)); do
+		s=${lines[j]}
+		if ((j == first)); then
+			s=${s#"${s%%[! ]*}"}
+			s=${s#❯}
+			s=${s#"$NB"}
+			s=${s# }
+		else
+			s=${s#  }
+		fi
+		while [[ $s == *" " || $s == *"$NB" ]]; do
+			s=${s%" "}
+			s=${s%"$NB"}
+		done
+		out+=${out:+$'\n'}$s
+	done
+
+	while [[ $out == *$'\n' ]]; do out=${out%$'\n'}; done
+	[[ -z $out ]] && return 1
+	# Hints Claude Code draws on the ❯ line when the box is otherwise empty.
+	[[ $out == "Press up to edit queued messages" ]] && return 1
+	printf '%s' "$out"
+}
+
+# Codex CLI (Ratatui) draws no border rules: the composer is the last line
+# opening with the › marker, continuation rows indent two spaces, and a blank
+# line separates it from the status bar. Verified against live captures of
+# codex 0.151.0 (tests/fixtures/codex-*.txt).
+parse_box_codex() {
+	local -a lines=()
+	local line
+	while IFS= read -r line; do lines+=("$line"); done <<<"$1"
+
+	local i n=${#lines[@]} first=-1
+	for ((i = n - 1; i >= 0; i--)); do
+		[[ ${lines[i]} == "› "* || ${lines[i]} == "›" ]] && { first=$i; break; }
+	done
+	((first < 0)) && return 1
+
+	local out="" s j
+	for ((j = first; j < n; j++)); do
+		s=${lines[j]}
+		if ((j == first)); then
+			s=${s#"› "}
+			s=${s#"›"}
+		else
+			[[ -z $s ]] && break
+			s=${s#  }
+		fi
+		while [[ $s == *" " ]]; do s=${s%" "}; done
+		out+=${out:+$'\n'}$s
+	done
+
+	while [[ $out == *$'\n' ]]; do out=${out%$'\n'}; done
+	[[ -z $out ]] && return 1
+	# The placeholder Codex renders when the composer is empty.
+	[[ $out == "Ask Codex to do anything" ]] && return 1
+	printf '%s' "$out"
+}
+
+# --------------------------------------------------------------- storage ----
+
+# GNU vs BSD stat, detected once; the only stat use, kept portable.
+if stat -c '%Y' / >/dev/null 2>&1; then
+	mtimes() { stat -c '%Y' -- "$@"; }
+else
+	mtimes() { stat -f '%m' -- "$@"; }
+fi
+
+nth_file() { ls -1t "$dir"/*.txt 2>/dev/null | sed -n "${1}p"; }
+
+# If this draft continues one already stored - you recovered it with the
+# picker and carried on typing - keep writing to that entry instead of
+# cloning it. Candidates must themselves be long enough that a short one
+# cannot swallow every draft that starts with the same few characters.
+adopt_file() {
+	local cand text
+	while IFS= read -r cand; do
+		text=$(<"$cand") || continue
+		((${#text} >= minlen)) || continue
+		[[ $1 == "$text"* ]] && {
+			printf '%s' "$cand"
+			return 0
+		}
+	done < <(ls -1t "$dir"/*.txt 2>/dev/null | head -"$scan")
+	return 1
+}
+
+prune() {
+	local old
+	while IFS= read -r old; do rm -f "$old"; done < <(
+		ls -1t "$dir"/*.txt 2>/dev/null | tail -n +$((keep + 1))
+	)
+}
+
+to_clipboard() {
+	if tmux list-sessions >/dev/null 2>&1; then
+		tmux load-buffer -w - # OSC 52 carries raw UTF-8; clip.exe would mangle it
+	elif [[ -x /mnt/c/Windows/System32/clip.exe ]]; then
+		/mnt/c/Windows/System32/clip.exe
+	elif command -v pbcopy >/dev/null 2>&1; then
+		pbcopy
+	elif command -v wl-copy >/dev/null 2>&1; then
+		wl-copy
+	elif command -v xclip >/dev/null 2>&1; then
+		xclip -selection clipboard
+	else
+		return 1
+	fi
+}
+
+# ---------------------------------------------------------------- daemon ----
+
+# Cheap check on every entry point, so the daemon self-heals. The tmux
+# session-created hook written by the installer covers the time before the
+# first prompt-watch invocation.
+ensure_daemon() {
+	local pidfile="$dir/.daemon.pid"
+	[[ -r $pidfile ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null && return 0
+	mkdir -p "$dir" 2>/dev/null || return 1
+	(setsid "$SELF" daemon >/dev/null 2>&1 &)
+}
+
+daemon_loop() {
+	mkdir -p "$dir" || exit 1
+
+	# Two guards, because the pidfile alone is not enough: delete it while a
+	# daemon is alive and a second one starts happily. The process-table scan
+	# is skipped when PW_DIR is overridden - tests run isolated instances.
+	local pidfile="$dir/.daemon.pid"
+	if [[ -r $pidfile ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
+		exit 0 # already running
+	fi
+	if [[ -z ${PW_DIR:-} ]] && ps -eo pid,args | awk -v me=$$ \
+		'$1 != me && $2 == "bash" && $3 ~ /prompt-watch$/ && $4 == "daemon" { found = 1 }
+		 END { exit !found }'; then
+		exit 0 # an orphan from an earlier start is still going
+	fi
+	echo $$ >"$pidfile"
+	trap 'rm -f "$pidfile"' EXIT
+
+	declare -A LAST LASTFILE
+	local fails=0 wrote seen now panes pane cmd act agent cap cur f
+	while :; do
+		now=$(printf '%(%s)T' -1)
+		panes=$(tmux list-panes -a -F '#{pane_id} #{pane_current_command} #{window_activity}' 2>/dev/null)
+		if [[ -z $panes ]]; then
+			((++fails >= 6)) && exit 0 # tmux server is gone
+			sleep "$interval"
+			continue
+		fi
+		fails=0
+
+		wrote=0
+		seen=" "
+		while read -r pane cmd act; do
+			agent=$(agent_of "$cmd") || continue
+			# A window nobody touched cannot be growing a draft, and whatever
+			# was typed there was captured while it was active.
+			[[ $act =~ ^[0-9]+$ ]] && ((now - act > idle)) && continue
+			seen+="$pane "
+
+			cap=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || continue
+			cur=$(parse_box "$cap" "$agent") || continue
+			[[ -n $cur && $cur != "${LAST[$pane]-}" ]] || continue
+			# Scratch input is not worth an entry: it costs a slot a long
+			# prompt needs, and retyping "ok" is free.
+			((${#cur} >= minlen)) || continue
+
+			# Still typing the same draft (pure append)? Overwrite that file
+			# rather than pile up a near-duplicate. Otherwise see whether it
+			# continues an entry already on disk, and only then start a new one.
+			f=${LASTFILE[$pane]-}
+			if [[ -z $f || ! -f $f || $cur != "${LAST[$pane]-}"* ]]; then
+				f=$(adopt_file "$cur") ||
+					f="$dir/$(printf '%(%Y%m%d-%H%M%S)T' -1)-p${pane#%}.txt"
+			fi
+			printf '%s\n' "$cur" >"$f"
+			LAST[$pane]=$cur
+			LASTFILE[$pane]=$f
+			wrote=1
+		done <<<"$panes"
+
+		# Forget panes that have gone away, so state does not grow forever.
+		for pane in "${!LAST[@]}"; do
+			[[ $seen == *" $pane "* ]] || unset "LAST[$pane]" "LASTFILE[$pane]"
+		done
+
+		((wrote)) && prune
+		sleep "$interval"
+	done
+}
+
+# ---------------------------------------------------------------- picker ----
+
+pane_id_of() {
+	local seg=${1##*-}
+	seg=${seg%.txt}
+	if [[ $seg == p* ]]; then printf '%%%s' "${seg#p}"; else printf '%%%s' "${seg:6}"; fi
+}
+
+# Map pane id -> window name, filled by one tmux call. `tmux list-panes -a`
+# costs 50-200 ms on a busy server, which is most of the picker's startup,
+# so yesterday's answer is read from a cache and refreshed detached for next
+# time. A renamed window is one open stale.
+declare -A PANEMAP
+PANEMAP_LOADED=0
+load_panemap() {
+	((PANEMAP_LOADED)) && return
+	PANEMAP_LOADED=1
+	local cache="$dir/.panemap" id name
+
+	_absorb() {
+		while read -r id name; do
+			# Drop a leading status glyph so the column stays aligned - an
+			# emoji is one character but two columns wide, so printf padding lies.
+			[[ $name =~ ^[^[:alnum:]]*[[:space:]]*(.*)$ ]] && name=${BASH_REMATCH[1]}
+			[[ -n $name ]] && PANEMAP[$id]=$name
+		done
+	}
+
+	if [[ -r $cache ]]; then
+		_absorb <"$cache"
+		{ tmux list-panes -a -F '#{pane_id} #{window_name}' >"$cache.tmp" 2>/dev/null &&
+			mv "$cache.tmp" "$cache"; } >/dev/null 2>&1 &
+	else
+		tmux list-panes -a -F '#{pane_id} #{window_name}' >"$cache.tmp" 2>/dev/null &&
+			mv "$cache.tmp" "$cache"
+		[[ -r $cache ]] && _absorb <"$cache"
+	fi
+}
+
+pane_of() {
+	local id
+	id=$(pane_id_of "$1")
+	load_panemap
+	printf '%s' "${PANEMAP[$id]:-$id}"
+}
+
+label() {
+	local p line
+	p=$(pane_of "$1")
+	IFS= read -r line <"$1" || line=""
+	printf '%(%m-%d %H:%M)T  %-16.16s %s' "$(mtimes "$1")" "$p" "${line:0:58}"
+}
+
+load_files() {
+	files=()
+	while IFS= read -r f; do files+=("$f"); done < <(ls -1t "$dir"/*.txt 2>/dev/null | head -"$1")
+}
+
+list_plain() {
+	load_files "$1"
+	((${#files[@]})) || { echo "no drafts in $dir"; return 0; }
+	local i
+	for i in "${!files[@]}"; do
+		printf '%3d  %s\n' "$((i + 1))" "$(label "${files[i]}")"
+	done
+	local total
+	total=$(ls -1 "$dir"/*.txt 2>/dev/null | wc -l)
+	((total > ${#files[@]})) && printf '     ... %d more of %d kept\n' \
+		"$((total - ${#files[@]}))" "$total"
+	return 0
+}
+
+# Interactive chooser. Requires a real terminal; origin is the pane to paste into.
+picker() {
+	local n=$1 origin=$2 sel=1 key rest f body
+	load_files "$n"
+	((${#files[@]})) || { echo "no drafts in $dir"; sleep 1; return 1; }
+
+	# Never draw more rows than the window has lines - one row of overflow
+	# scrolls the screen and every relative cursor move after that is off.
+	# stty, not tput: inside tmux, `tput lines` reports terminfo's default 24.
+	local rows
+	rows=$({ { stty size </dev/tty; } 2>/dev/null || echo "24 80"; } | awk '{print $1}')
+	[[ $rows =~ ^[0-9]+$ ]] || rows=24
+	local avail=$((rows - 1))
+	((avail < 1)) && avail=1
+	if ((${#files[@]} > avail)); then
+		files=("${files[@]:0:avail}")
+	fi
+
+	# Build every row label once, and build it without forking: one stat
+	# covers every mtime, %(...)T formats in-shell, read pulls the first line
+	# straight from the file. The whole list costs a single process.
+	local -a labels=() mts=()
+	local i line seg pane
+	while IFS= read -r line; do mts+=("$line"); done < <(mtimes "${files[@]}")
+	load_panemap
+	for i in "${!files[@]}"; do
+		IFS= read -r line <"${files[i]}" || line=""
+		seg=${files[i]##*-}
+		seg=${seg%.txt}
+		if [[ $seg == p* ]]; then pane="%${seg#p}"; else pane="%${seg:6}"; fi
+		pane=${PANEMAP[$pane]:-$pane}
+		printf -v "labels[$i]" '%(%m-%d %H:%M)T  %-16.16s %s' "${mts[i]}" "$pane" "${line:0:58}"
+	done
+
+	draw() {
+		local i
+		printf '\033[H' # home, so a redraw can never drift
+		for i in "${!files[@]}"; do
+			if ((i + 1 == sel)); then
+				printf '\033[7m %2d  %s \033[0m\033[K\n' "$((i + 1))" "${labels[i]}"
+			else
+				printf ' %2d  %s\033[K\n' "$((i + 1))" "${labels[i]}"
+			fi
+		done
+		printf '\033[2m 1-9 pick · ↑/↓ move · Enter insert · c copy · q quit\033[0m\033[K\033[J'
+	}
+
+	# Draw on the alternate screen so the caller's terminal is left untouched.
+	printf '\033[?1049h\033[H\033[2J'
+	trap 'printf "\033[?1049l"' EXIT INT TERM
+
+	draw
+	while true; do
+		IFS= read -rsn1 key || break
+		if [[ $key == $'\033' ]]; then
+			read -rsn2 -t 0.1 rest || rest=""
+			key=$key$rest
+		fi
+		case $key in
+		$'\033[A' | k) ((sel > 1)) && ((sel--)) ;;
+		$'\033[B' | j) ((sel < ${#files[@]})) && ((sel++)) ;;
+		$'\033[H' | g) sel=1 ;;
+		$'\033[F' | G) sel=${#files[@]} ;;
+		# A digit picks that row outright - no scrolling for the common case.
+		[1-9]) ((key <= ${#files[@]})) && { sel=$key; break; } ;;
+		0) ((${#files[@]} >= 10)) && { sel=10; break; } ;;
+		q | $'\033') printf '\033[?1049l'; trap - EXIT INT TERM; return 0 ;;
+		"" | c) break ;;
+		esac
+		draw
+	done
+
+	f=${files[sel - 1]}
+	body=$(cat "$f")
+	printf '\033[?1049l'
+	trap - EXIT INT TERM
+	if [[ $key != c && -n $origin ]]; then
+		# Insert it back into the pane we came from. The paste is deferred so
+		# it lands after this popup has closed and the prompt has the keyboard
+		# again, and goes through paste-buffer -p so a multi-line draft cannot
+		# submit itself on the first newline.
+		tmux load-buffer -b pwatch - <"$f"
+		tmux run-shell -b -d 2 "tmux paste-buffer -p -d -b pwatch -t '$origin'"
+		printf 'inserting %d chars into %s\n' "${#body}" "$origin"
+	else
+		printf '%s' "$body" | to_clipboard
+		printf 'copied %d chars from %s\n' "${#body}" "$(pane_of "$f")"
+	fi
+	sleep 0.6
+}
+
+# ---------------------------------------------------------------- visual ----
+
+# $VISUAL shim for Claude Code's Ctrl+G (chat:externalEditor). Claude Code
+# writes the current prompt buffer to a temp file, passes the path as the
+# last argument, waits for exit, then reads the file back and only replaces
+# the prompt if the contents changed. This copies and never writes, so the
+# prompt is left exactly as typed. The exact path - no screen scraping.
+visual() {
+	local f=${1-}
+	[[ -n $f && -r $f ]] || exit 0
+
+	# externalEditorContext prepends the previous response above a marker line.
+	local start=1 marker
+	marker=$(grep -n -m1 -F 'Write your reply below this line' "$f" 2>/dev/null | cut -d: -f1) || true
+	[[ -n ${marker:-} ]] && start=$((marker + 1))
+
+	local body
+	body=$(tail -n +"$start" "$f" | tr -d '\r')
+	[[ -n $body ]] || exit 0
+	printf '%s' "$body" | to_clipboard
+	exit 0
+}
+
+# ---------------------------------------------------------------- doctor ----
+
+doctor() {
+	local rc=0 pidfile="$dir/.daemon.pid" pid
+
+	if ((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2))); then
+		echo "ok    bash $BASH_VERSION"
+	else
+		echo "FAIL  bash $BASH_VERSION - need 4.2+ (macOS: brew install bash)"
+		rc=1
+	fi
+
+	if tmux list-sessions >/dev/null 2>&1; then
+		echo "ok    tmux server reachable"
+	else
+		echo "FAIL  no tmux server - prompt-watch only works inside tmux"
+		rc=1
+	fi
+
+	if mkdir -p "$dir" 2>/dev/null && [[ -w $dir ]]; then
+		echo "ok    state dir writable: $dir"
+	else
+		echo "FAIL  state dir not writable: $dir"
+		rc=1
+	fi
+
+	if [[ -r $pidfile ]] && pid=$(cat "$pidfile" 2>/dev/null) && kill -0 "$pid" 2>/dev/null; then
+		echo "ok    daemon running (pid $pid)"
+	else
+		echo "FAIL  daemon not running - any prompt-watch call starts it; check the tmux hook"
+		rc=1
+	fi
+
+	local counts="" cmd c
+	for cmd in claude codex; do
+		c=$(tmux list-panes -a -F '#{pane_current_command}' 2>/dev/null | grep -c "^$cmd" || true)
+		counts+="$cmd:$c "
+	done
+	echo "info  agent panes seen: $counts"
+
+	if tmux list-keys 2>/dev/null | grep -q prompt-watch; then
+		echo "ok    tmux picker binding installed"
+	else
+		echo "warn  no tmux binding - run install.sh, or open the picker with: prompt-watch"
+	fi
+
+	if grep -qs 'prompt-watch-visual' "$HOME/.zshrc" "$HOME/.bashrc" 2>/dev/null; then
+		echo "info  Ctrl+G alias present"
+	else
+		echo "info  Ctrl+G exact-copy alias not installed (optional: install.sh --ctrl-g)"
+	fi
+
+	local total newest
+	total=$(ls -1 "$dir"/*.txt 2>/dev/null | wc -l)
+	if ((total > 0)); then
+		newest=$(ls -1t "$dir"/*.txt 2>/dev/null | head -1)
+		echo "info  $total drafts stored, newest: $(printf '%(%F %H:%M)T' "$(mtimes "$newest")")"
+	else
+		echo "info  no drafts stored yet - type 15+ chars in an agent pane and wait ${interval}s"
+	fi
+
+	return $rc
+}
+
+usage() { sed -n '2,21p' "$SELF" | sed 's/^# \?//'; }
+
+# -------------------------------------------------------------- dispatch ----
+
+# Installed as a `prompt-watch-visual` symlink for $VISUAL, which must be a
+# single word for every program that execs it.
+case ${0##*/} in
+prompt-watch-visual) visual "${1-}" ;;
+esac
+
+cmd=${1:-choose}
+[[ $cmd =~ ^[0-9]+$ ]] && { set -- choose "$cmd"; cmd=choose; }
+
+case $cmd in
+choose)
+	ensure_daemon
+	n=${2:-10}
+	[[ $n =~ ^[0-9]+$ ]] || { usage >&2; exit 1; }
+	if [[ -t 0 && -t 1 ]]; then
+		picker "$n" "${TMUX_PANE:-}"
+	elif [[ -n ${TMUX-} ]]; then
+		# No terminal here (an agent's ! shell mode, a pipe) - draw the picker
+		# in a popup. Height = rows + hint + two border lines.
+		tmux display-popup -E -w 80% -h $((n + 3)) -T ' prompt-watch ' \
+			"$SELF" __popup "$n" "${TMUX_PANE:-}"
+	else
+		list_plain "$n"
+	fi
+	;;
+__popup)
+	ensure_daemon
+	picker "${2:-10}" "${3:-}"
+	;;
+list)
+	ensure_daemon
+	list_plain "${2:-10}"
+	;;
+show)
+	f=$(nth_file "${2:-1}")
+	[[ -n $f ]] || { echo "no such draft" >&2; exit 1; }
+	cat "$f"
+	;;
+copy)
+	ensure_daemon
+	arg=${2:-}
+	if [[ -z $arg || $arg == %* ]]; then
+		pane=${arg:-${TMUX_PANE:-}}
+		[[ -n $pane ]] || pane=$(tmux display -p '#{pane_id}' 2>/dev/null) || {
+			echo "not in tmux" >&2; exit 1; }
+		agent=$(agent_of "$(tmux display -p -t "$pane" '#{pane_current_command}' 2>/dev/null)") || agent=claude
+		cap=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || { echo "cannot capture $pane" >&2; exit 1; }
+		body=$(parse_box "$cap" "$agent") || { echo "prompt box is empty" >&2; exit 1; }
+	else
+		f=$(nth_file "$arg")
+		[[ -n $f ]] || { echo "no such draft" >&2; exit 1; }
+		body=$(cat "$f")
+	fi
+	printf '%s' "$body" | to_clipboard
+	printf 'copied %d chars\n' "${#body}"
+	;;
+daemon)
+	daemon_loop
+	;;
+ensure)
+	ensure_daemon
+	;;
+visual)
+	visual "${2-}"
+	;;
+doctor)
+	doctor
+	;;
+version | --version | -V)
+	echo "prompt-watch $VERSION"
+	;;
+help | --help | -h)
+	usage
+	;;
+# Testing hooks: `__parse <agent> < captured-pane` shows what the parser
+# extracts, `__adopt <text>` which stored entry a draft would continue,
+# `__prune` applies retention to $PW_DIR now.
+__parse)
+	parse_box "$(cat)" "${2:-claude}" && echo
+	;;
+__adopt)
+	adopt_file "${2-}" && echo
+	;;
+__prune)
+	mkdir -p "$dir"
+	prune
+	;;
+*)
+	usage >&2
+	exit 1
+	;;
+esac
