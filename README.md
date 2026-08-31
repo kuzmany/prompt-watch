@@ -9,20 +9,14 @@
 ![bash](https://img.shields.io/badge/bash-%E2%89%A5%204.2-lightgrey)
 ![tmux](https://img.shields.io/badge/needs-tmux-brightgreen)
 
-Terminal AI agents never write the prompt you are typing to disk. Kill the
-pane, crash the process, hit Ctrl+C at the wrong moment — a 500-word prompt
-is gone. prompt-watch is the lifeguard on that beach: it snapshots the prompt
-box of every agent pane in tmux every 10 seconds, so a crash costs you nothing.
+Your AI coding agent never saves the prompt you are typing. Crash, Ctrl+C,
+closed pane — a 500-word prompt is gone. prompt-watch quietly snapshots the
+prompt box of every **Claude Code** and **Codex CLI** pane in tmux, so you
+can always get it back.
 
 ![Typing a long prompt in Claude Code, the process dies, Alt+G opens the picker, Enter puts the draft back](docs/media/demo.gif)
 
-*Type a long prompt, the agent dies, Alt+G, Enter — the draft is back. Real
-Claude Code, real recovery; only the agent's boot time is trimmed.*
-
-Works with **Claude Code** and **Codex CLI**. The gap is real across all
-agent CLIs: none of them persist the unsent prompt
-([openai/codex#23085](https://github.com/openai/codex/issues/23085) is still
-open), and every existing recovery tool reads only *submitted* history.
+*The agent dies mid-prompt. Alt+G, Enter — it's back.*
 
 ## Install
 
@@ -30,14 +24,24 @@ open), and every existing recovery tool reads only *submitted* history.
 curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash
 ```
 
-Flags: `--yes` (no questions), `--key M-r` (different picker key),
-`--ctrl-g` (exact-copy alias, see below), `--uninstall` (clean removal).
-Needs tmux and bash ≥ 4.2 (macOS: `brew install bash`).
+Needs tmux (`brew install tmux` / `apt install tmux`) and bash ≥ 4.2
+(macOS: `brew install bash`).
 
-### Let your agent install it
+Then press **Alt+G** inside tmux. That's the whole tool.
 
-Paste this into Claude Code, Codex CLI, Grok CLI, or any terminal agent —
-it installs prompt-watch and proves it works before it says it is done:
+## Use
+
+- **Alt+G** — your last 10 drafts. `1`–`9` or `↑`/`↓` picks one,
+  **Enter** puts it back into the prompt, `c` copies it, `q` quits.
+- Anything you type is saved within 10 seconds and kept as plain text in
+  `~/.local/state/prompt-watch/` — same exposure as your shell history.
+- Something feels off? `prompt-watch doctor` tells you what.
+
+<details>
+<summary><b>Or paste this into your agent and let it install</b></summary>
+
+Works in Claude Code, Codex CLI, Grok CLI, or any terminal agent — it
+installs prompt-watch and proves it works before it says it is done:
 
 ```text
 Install prompt-watch from https://github.com/kuzmany/prompt-watch — it snapshots
@@ -61,19 +65,25 @@ Then stop. Do not start the picker for me: it is interactive and I will press
 Alt+G myself.
 ```
 
-## Use
+</details>
 
-You learn two gestures:
+<details>
+<summary><b>Install options</b></summary>
 
-- **Alt+G** — the picker pops up with your 10 most recent drafts.
-  `1`–`9` picks a row, `↑`/`↓` moves, **Enter** inserts the draft back into
-  the pane you came from, `c` copies it to the clipboard, `q` quits.
-- **`prompt-watch doctor`** — one-line health checks when something feels off.
+| Flag | Does |
+|---|---|
+| `--yes` | no questions asked |
+| `--key M-r` | picker on a different tmux key |
+| `--ctrl-g` | Ctrl+G copies the exact prompt buffer (Claude Code only) |
+| `--uninstall` | clean removal; add `--purge` to also delete stored drafts |
 
-That's it. The daemon runs invisibly, starts itself, and survives nothing —
-if it dies, the next picker open restarts it.
+Everything the installer writes to your dotfiles sits between
+`# >>> prompt-watch >>>` markers and is removed cleanly by `--uninstall`.
 
-### Ctrl+G: the exact copy (Claude Code only)
+</details>
+
+<details>
+<summary><b>Ctrl+G: the exact copy (Claude Code only)</b></summary>
 
 Screen scraping reads what is visible. Ctrl+G reads the truth: Claude Code's
 external-editor feature writes the real prompt buffer to a file, and the
@@ -81,17 +91,10 @@ external-editor feature writes the real prompt buffer to a file, and the
 prompt. Enable with `install.sh --ctrl-g` — it aliases `claude` to set
 `$VISUAL` for that command only, so `git commit` keeps your real editor.
 
-## Supported agents
+</details>
 
-| Agent | Auto-snapshot | Exact copy (Ctrl+G) |
-|---|---|---|
-| Claude Code | yes | yes |
-| Codex CLI | yes | no equivalent found yet |
-
-Adding an agent is one process-name row plus one composer parser
-(`parse_box_*` in `bin/prompt-watch`) — PRs welcome, fixtures included.
-
-## How it works
+<details>
+<summary><b>How it works, and honest limits</b></summary>
 
 1. One daemon wakes every 10 s and lists tmux panes once.
 2. Panes running an agent whose window was active in the last 10 minutes get
@@ -102,10 +105,9 @@ Adding an agent is one process-name row plus one composer parser
 4. Changed text of 15+ characters is saved. A draft that extends the pane's
    last snapshot — or any recent stored draft — overwrites that entry
    instead of duplicating it.
-5. The newest 200 drafts are kept as plain files in
-   `~/.local/state/prompt-watch/`.
+5. The newest 200 drafts are kept as plain files.
 
-## Honest limits
+Limits, stated plainly:
 
 - tmux only. Without a pane there is nothing to read.
 - A draft typed and lost inside one 10 s interval is never seen.
@@ -118,10 +120,13 @@ Adding an agent is one process-name row plus one composer parser
   filtered out; inline completions still look like typed text to a screen read.
 - Drafts are plaintext — same exposure as your shell history.
 
-## Config
+Adding an agent is one process-name row plus one composer parser
+(`parse_box_*` in `bin/prompt-watch`) — PRs welcome, fixtures included.
+
+</details>
 
 <details>
-<summary>Environment variables (defaults are fine)</summary>
+<summary><b>Config</b></summary>
 
 | Variable | Default | Meaning |
 |---|---|---|

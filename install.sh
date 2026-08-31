@@ -97,12 +97,11 @@ esac
 # --- tmux --------------------------------------------------------------------
 
 if confirm "Add the $key picker binding and daemon autostart hook to $TMUX_CONF?"; then
-	if [[ -f $TMUX_CONF ]] && grep -v "$MARK_OPEN" "$TMUX_CONF" 2>/dev/null |
-		grep -q 'set-hook.*session-created'; then
+	strip_block "$TMUX_CONF"
+	if [[ -f $TMUX_CONF ]] && grep -q 'set-hook.*session-created' "$TMUX_CONF"; then
 		echo "WARNING: $TMUX_CONF already sets a session-created hook outside"
 		echo "         the prompt-watch block; tmux keeps only one. Merge by hand."
 	fi
-	strip_block "$TMUX_CONF"
 	{
 		echo "$MARK_OPEN"
 		echo "bind -n $key display-popup -E -w 80% -h 13 -T ' prompt-watch ' \"$BIN __popup 10 '#{pane_id}'\""
@@ -131,4 +130,11 @@ fi
 "$BIN" ensure || true
 sleep 1 # give the detached daemon a beat before doctor checks its pidfile
 echo
-"$BIN" doctor || true
+if out=$("$BIN" doctor 2>&1); then
+	echo "Done. Press $key inside tmux to get a lost prompt back."
+else
+	echo "$out"
+	echo
+	echo "Installed, but something is off - see the FAIL lines above."
+	echo "Fix it, then check again with: prompt-watch doctor"
+fi
