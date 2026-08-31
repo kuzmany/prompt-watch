@@ -2,7 +2,7 @@
 
 **Prompts, back from the dead.**
 
-![A lifeguard running into the surf to rescue a drowning terminal window](docs/media/prompt-watch-hero.jpg)
+![prompt-watch title card: a sunset beach, a lifeguard tower, a life ring and a terminal window riding the wave](docs/media/prompt-watch-hero.jpg)
 
 [![ci](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
