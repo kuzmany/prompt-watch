@@ -6,7 +6,7 @@
 
 [![ci](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml/badge.svg)](https://github.com/kuzmany/prompt-watch/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![bash](https://img.shields.io/badge/bash-%E2%89%A5%204.2-lightgrey)
+![bash](https://img.shields.io/badge/bash-%E2%89%A5%203.2-lightgrey)
 ![tmux](https://img.shields.io/badge/needs-tmux-brightgreen)
 
 Your AI coding agent never saves the prompt you are typing. Crash, Ctrl+C,
@@ -24,10 +24,17 @@ can always get it back.
 curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash
 ```
 
-Needs tmux (`brew install tmux` / `apt install tmux`) and bash ≥ 4.2
-(macOS: `brew install bash`).
+Needs tmux (`brew install tmux` / `apt install tmux`). Nothing else — it
+runs on the bash your system already has, macOS 3.2 included.
 
 Then press **Alt+G** inside tmux. That's the whole tool.
+
+| Works on | Agents | Verified by |
+|---|---|---|
+| Linux | Claude Code, Codex CLI | CI: full suite + live tmux daemon |
+| macOS (system bash 3.2, BSD tools) | Claude Code, Codex CLI | CI: `macos-latest` install, doctor, live daemon |
+| WSL / WSL2 | Claude Code, Codex CLI | daily use by the author; clipboard falls back to `clip.exe` |
+| Windows without WSL | — | no tmux, so no |
 
 ## Use
 
@@ -47,8 +54,8 @@ installs prompt-watch and proves it works before it says it is done:
 Install prompt-watch from https://github.com/kuzmany/prompt-watch — it snapshots
 the prompt box of AI agent panes in tmux so an unsent prompt survives a crash.
 
-1. Check the prerequisites first: `tmux -V` (any version with popups, 3.2+) and
-   `bash --version` (need 4.2+). Say so and stop if either is missing.
+1. Check the prerequisite first: `tmux -V` (any version with popups, 3.2+).
+   Say so and stop if tmux is missing.
 2. Read https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh
    before running anything, and tell me what it changes. Then install with:
    `curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash -s -- --yes`

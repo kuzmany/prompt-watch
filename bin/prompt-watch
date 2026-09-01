@@ -39,7 +39,55 @@ scan=${PW_SCAN:-30}
 NB=$'\xc2\xa0' # the non-breaking space Claude Code puts after the prompt marker
 CLAUDE_RULE='──────────'
 
-SELF=$(readlink -f "$0" 2>/dev/null) || SELF=$0
+# --- portability -------------------------------------------------------------
+# macOS ships bash 3.2 and a BSD userland. These helpers keep one script working
+# there without giving up the fast paths on a modern bash.
+
+# readlink -f is GNU-only. Resolve by hand where it is missing, so re-invoking
+# ourselves (daemon, popup) always uses an absolute path.
+resolve_self() {
+	local p t
+	if p=$(readlink -f "$1" 2>/dev/null) && [[ -n $p ]]; then
+		printf '%s' "$p"
+		return
+	fi
+	p=$1
+	[[ $p == /* ]] || p=$PWD/$p
+	while [[ -L $p ]]; do
+		t=$(readlink "$p") || break
+		[[ $t == /* ]] || t=${p%/*}/$t
+		p=$t
+	done
+	printf '%s' "$p"
+}
+SELF=$(resolve_self "$0")
+
+# printf '%(...)T' needs bash 4.2. date is the fallback, and GNU and BSD spell
+# "format this epoch" differently - BSD date -r 0 prints 0, GNU treats 0 as a
+# filename and fails, which is the cheapest reliable probe.
+if printf '%(%s)T' -1 >/dev/null 2>&1; then
+	now_epoch() { printf '%(%s)T' -1; }
+	now_stamp() { printf '%(%Y%m%d-%H%M%S)T' -1; }
+	fmt_epoch() { printf "%($2)T" "$1"; }
+elif [[ $(date -r 0 '+%s' 2>/dev/null) == 0 ]]; then
+	now_epoch() { date '+%s'; }
+	now_stamp() { date '+%Y%m%d-%H%M%S'; }
+	fmt_epoch() { date -r "$1" "+$2"; }
+else
+	now_epoch() { date '+%s'; }
+	now_stamp() { date '+%Y%m%d-%H%M%S'; }
+	fmt_epoch() { date -d "@$1" "+$2"; }
+fi
+
+# setsid is util-linux. On macOS a nohup inside a subshell orphans the daemon to
+# init and keeps it alive when the terminal closes.
+spawn_detached() {
+	if command -v setsid >/dev/null 2>&1; then
+		(setsid "$@" >/dev/null 2>&1 &)
+	else
+		(nohup "$@" >/dev/null 2>&1 &)
+	fi
+}
 
 # ---------------------------------------------------------------- agents ----
 
@@ -221,7 +269,7 @@ ensure_daemon() {
 	local pidfile="$dir/.daemon.pid"
 	[[ -r $pidfile ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null && return 0
 	mkdir -p "$dir" 2>/dev/null || return 1
-	(setsid "$SELF" daemon >/dev/null 2>&1 &)
+	spawn_detached "$SELF" daemon
 }
 
 daemon_loop() {
@@ -242,10 +290,12 @@ daemon_loop() {
 	echo $$ >"$pidfile"
 	trap 'rm -f "$pidfile"' EXIT
 
-	declare -A LAST LASTFILE
-	local fails=0 wrote seen now panes pane cmd act agent cap cur f
+	# Plain indexed arrays keyed by the pane's number, not associative ones:
+	# a tmux pane id is always %<number>, and bash 3.2 has no declare -A.
+	local -a LAST=() LASTFILE=()
+	local fails=0 wrote seen now panes pane idx cmd act agent cap cur f
 	while :; do
-		now=$(printf '%(%s)T' -1)
+		now=$(now_epoch)
 		panes=$(tmux list-panes -a -F '#{pane_id} #{pane_current_command} #{window_activity}' 2>/dev/null)
 		if [[ -z $panes ]]; then
 			((++fails >= 6)) && exit 0 # tmux server is gone
@@ -261,11 +311,13 @@ daemon_loop() {
 			# A window nobody touched cannot be growing a draft, and whatever
 			# was typed there was captured while it was active.
 			[[ $act =~ ^[0-9]+$ ]] && ((now - act > idle)) && continue
-			seen+="$pane "
+			idx=${pane#%}
+			[[ $idx =~ ^[0-9]+$ ]] || continue
+			seen+="$idx "
 
 			cap=$(tmux capture-pane -p -t "$pane" 2>/dev/null) || continue
 			cur=$(parse_box "$cap" "$agent") || continue
-			[[ -n $cur && $cur != "${LAST[$pane]-}" ]] || continue
+			[[ -n $cur && $cur != "${LAST[$idx]-}" ]] || continue
 			# Scratch input is not worth an entry: it costs a slot a long
 			# prompt needs, and retyping "ok" is free.
 			((${#cur} >= minlen)) || continue
@@ -273,20 +325,19 @@ daemon_loop() {
 			# Still typing the same draft (pure append)? Overwrite that file
 			# rather than pile up a near-duplicate. Otherwise see whether it
 			# continues an entry already on disk, and only then start a new one.
-			f=${LASTFILE[$pane]-}
-			if [[ -z $f || ! -f $f || $cur != "${LAST[$pane]-}"* ]]; then
-				f=$(adopt_file "$cur") ||
-					f="$dir/$(printf '%(%Y%m%d-%H%M%S)T' -1)-p${pane#%}.txt"
+			f=${LASTFILE[$idx]-}
+			if [[ -z $f || ! -f $f || $cur != "${LAST[$idx]-}"* ]]; then
+				f=$(adopt_file "$cur") || f="$dir/$(now_stamp)-p$idx.txt"
 			fi
 			printf '%s\n' "$cur" >"$f"
-			LAST[$pane]=$cur
-			LASTFILE[$pane]=$f
+			LAST[$idx]=$cur
+			LASTFILE[$idx]=$f
 			wrote=1
 		done <<<"$panes"
 
 		# Forget panes that have gone away, so state does not grow forever.
-		for pane in "${!LAST[@]}"; do
-			[[ $seen == *" $pane "* ]] || unset "LAST[$pane]" "LASTFILE[$pane]"
+		for idx in "${!LAST[@]}"; do
+			[[ $seen == *" $idx "* ]] || unset "LAST[$idx]" "LASTFILE[$idx]"
 		done
 
 		((wrote)) && prune
@@ -306,7 +357,7 @@ pane_id_of() {
 # costs 50-200 ms on a busy server, which is most of the picker's startup,
 # so yesterday's answer is read from a cache and refreshed detached for next
 # time. A renamed window is one open stale.
-declare -A PANEMAP
+PANEMAP=() # indexed by pane number, so bash 3.2 needs no declare -A
 PANEMAP_LOADED=0
 load_panemap() {
 	((PANEMAP_LOADED)) && return
@@ -318,6 +369,8 @@ load_panemap() {
 			# Drop a leading status glyph so the column stays aligned - an
 			# emoji is one character but two columns wide, so printf padding lies.
 			[[ $name =~ ^[^[:alnum:]]*[[:space:]]*(.*)$ ]] && name=${BASH_REMATCH[1]}
+			id=${id#%}
+			[[ $id =~ ^[0-9]+$ ]] || continue
 			[[ -n $name ]] && PANEMAP[$id]=$name
 		done
 	}
@@ -334,17 +387,20 @@ load_panemap() {
 }
 
 pane_of() {
-	local id
+	local id num
 	id=$(pane_id_of "$1")
+	num=${id#%}
 	load_panemap
-	printf '%s' "${PANEMAP[$id]:-$id}"
+	[[ $num =~ ^[0-9]+$ ]] || { printf '%s' "$id"; return; }
+	printf '%s' "${PANEMAP[$num]:-$id}"
 }
 
 label() {
 	local p line
 	p=$(pane_of "$1")
 	IFS= read -r line <"$1" || line=""
-	printf '%(%m-%d %H:%M)T  %-16.16s %s' "$(mtimes "$1")" "$p" "${line:0:58}"
+	printf '%s  %-16.16s %s' "$(fmt_epoch "$(mtimes "$1")" '%m-%d %H:%M')" \
+		"$p" "${line:0:58}"
 }
 
 load_files() {
@@ -385,20 +441,24 @@ picker() {
 		files=("${files[@]:0:avail}")
 	fi
 
-	# Build every row label once, and build it without forking: one stat
-	# covers every mtime, %(...)T formats in-shell, read pulls the first line
-	# straight from the file. The whole list costs a single process.
+	# Build every row label once, and build it with as few forks as the shell
+	# allows: one stat covers every mtime, read pulls the first line straight
+	# from the file, and on bash 4.2+ the timestamp never leaves the shell.
 	local -a labels=() mts=()
-	local i line seg pane
+	local i line seg pane num row
 	while IFS= read -r line; do mts+=("$line"); done < <(mtimes "${files[@]}")
 	load_panemap
 	for i in "${!files[@]}"; do
 		IFS= read -r line <"${files[i]}" || line=""
 		seg=${files[i]##*-}
 		seg=${seg%.txt}
-		if [[ $seg == p* ]]; then pane="%${seg#p}"; else pane="%${seg:6}"; fi
-		pane=${PANEMAP[$pane]:-$pane}
-		printf -v "labels[$i]" '%(%m-%d %H:%M)T  %-16.16s %s' "${mts[i]}" "$pane" "${line:0:58}"
+		if [[ $seg == p* ]]; then num=${seg#p}; else num=${seg:6}; fi
+		pane="%$num"
+		[[ $num =~ ^[0-9]+$ ]] && pane=${PANEMAP[$num]:-$pane}
+		# printf -v into an array element needs bash 4.1; build then assign.
+		row=$(printf '%s  %-16.16s %s' \
+			"$(fmt_epoch "${mts[i]}" '%m-%d %H:%M')" "$pane" "${line:0:58}")
+		labels[i]=$row
 		# Clip to the window: a row wider than the terminal wraps, which breaks
 		# the highlight and pushes the hint line off screen. 7 columns cover the
 		# ' %2d  ' index prefix and the trailing space of the selected row.
@@ -492,10 +552,10 @@ visual() {
 doctor() {
 	local rc=0 pidfile="$dir/.daemon.pid" pid
 
-	if ((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2))); then
+	if ((BASH_VERSINFO[0] > 3 || (BASH_VERSINFO[0] == 3 && BASH_VERSINFO[1] >= 2))); then
 		echo "ok    bash $BASH_VERSION"
 	else
-		echo "FAIL  bash $BASH_VERSION - need 4.2+ (macOS: brew install bash)"
+		echo "FAIL  bash $BASH_VERSION - need 3.2+ (the version macOS ships)"
 		rc=1
 	fi
 
@@ -543,7 +603,7 @@ doctor() {
 	total=$(ls -1 "$dir"/*.txt 2>/dev/null | wc -l)
 	if ((total > 0)); then
 		newest=$(ls -1t "$dir"/*.txt 2>/dev/null | head -1)
-		echo "info  $total drafts stored, newest: $(printf '%(%F %H:%M)T' "$(mtimes "$newest")")"
+		echo "info  $total drafts stored, newest: $(fmt_epoch "$(mtimes "$newest")" '%F %H:%M')"
 	else
 		echo "info  no drafts stored yet - type 15+ chars in an agent pane and wait ${interval}s"
 	fi

@@ -5,13 +5,47 @@ on:
   pull_request:
 
 jobs:
-  test:
+  linux:
+    name: linux (bash 5, tmux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck bin/prompt-watch install.sh tests/e2e.sh
+        run: shellcheck bin/prompt-watch install.sh tests/e2e.sh tests/compat.sh
       - name: bats
         run: |
-          sudo apt-get update -q && sudo apt-get install -y -q bats
+          sudo apt-get update -q && sudo apt-get install -y -q bats tmux
           bats tests/run.bats
+      - name: compat suite
+        run: bash tests/compat.sh
+      - name: live daemon end-to-end
+        run: bash tests/e2e.sh
+      - name: install and doctor
+        run: |
+          ./install.sh --yes
+          tmux new-session -d -s ci
+          ~/.local/bin/prompt-watch doctor
+
+  bash32:
+    name: bash 3.2 (what macOS ships)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compat suite under bash 3.2
+        run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash tests/compat.sh
+
+  macos:
+    name: macos (system bash 3.2, BSD userland)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compat suite on system bash
+        run: /bin/bash tests/compat.sh
+      - name: install and doctor
+        run: |
+          brew install tmux
+          ./install.sh --yes
+          tmux new-session -d -s ci
+          ~/.local/bin/prompt-watch doctor
+      - name: live daemon end-to-end
+        run: bash tests/e2e.sh
