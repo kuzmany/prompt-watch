@@ -330,8 +330,8 @@ daemon_loop() {
 				f=$(adopt_file "$cur") || f="$dir/$(now_stamp)-p$idx.txt"
 			fi
 			printf '%s\n' "$cur" >"$f"
-			LAST[$idx]=$cur
-			LASTFILE[$idx]=$f
+			LAST[idx]=$cur
+			LASTFILE[idx]=$f
 			wrote=1
 		done <<<"$panes"
 
@@ -371,7 +371,7 @@ load_panemap() {
 			[[ $name =~ ^[^[:alnum:]]*[[:space:]]*(.*)$ ]] && name=${BASH_REMATCH[1]}
 			id=${id#%}
 			[[ $id =~ ^[0-9]+$ ]] || continue
-			[[ -n $name ]] && PANEMAP[$id]=$name
+			[[ -n $name ]] && PANEMAP[id]=$name
 		done
 	}
 
