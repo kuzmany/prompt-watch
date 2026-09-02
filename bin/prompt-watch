@@ -28,7 +28,7 @@
 set -uo pipefail
 umask 077
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 
 dir=${PW_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/prompt-watch}
 interval=${PW_INTERVAL:-10}
@@ -429,6 +429,21 @@ label() {
 		"$p" "${line:0:58}"
 }
 
+format_age() {
+	local then=$1 now=${2:-$(now_epoch)} delta
+	delta=$((now - then))
+	((delta < 0)) && delta=0
+	if ((delta < 60)); then
+		printf '%ss' "$delta"
+	elif ((delta < 3600)); then
+		printf '%sm' "$((delta / 60))"
+	elif ((delta < 86400)); then
+		printf '%sh' "$((delta / 3600))"
+	else
+		printf '%sd' "$((delta / 86400))"
+	fi
+}
+
 load_files() {
 	files=()
 	while IFS= read -r f; do files+=("$f"); done < <(ls -1t "$dir"/*.txt 2>/dev/null | head -"$1")
@@ -446,6 +461,27 @@ list_plain() {
 	((total > ${#files[@]})) && printf '     ... %d more of %d kept\n' \
 		"$((total - ${#files[@]}))" "$total"
 	return 0
+}
+
+# Open the chooser in the client that requested it. Popup title and border styles
+# arrived in tmux 3.3; older popup-capable versions keep the same picker content.
+open_popup() {
+	local n=$1 origin=$2 client=${3:-} version major rest minor command
+	local -a popup=(display-popup -E -w 80% -h $((n + 3)))
+	[[ -n $client ]] && popup+=(-c "$client")
+	version=$(tmux -V 2>/dev/null) || return 1
+	version=${version#tmux }
+	major=${version%%.*}
+	rest=${version#*.}
+	minor=${rest%%[!0-9]*}
+	if [[ $major =~ ^[0-9]+$ && $minor =~ ^[0-9]+$ ]] && \
+		((major > 3 || (major == 3 && minor >= 3))); then
+		popup+=(-T ' prompt-watch • recovered drafts ' \
+			-s 'bg=colour234,fg=colour252' -S 'fg=colour33,bold')
+	fi
+	popup+=(-t "$origin")
+	command=$(printf '%q __popup %q %q' "$SELF" "$n" "$origin")
+	tmux "${popup[@]}" "$command"
 }
 
 # Interactive chooser. Requires a real terminal; origin is the pane to paste into.
@@ -471,25 +507,28 @@ picker() {
 	# allows: one stat covers every mtime, read pulls the first line straight
 	# from the file, and on bash 4.2+ the timestamp never leaves the shell.
 	local -a labels=() mts=()
-	local i line seg pane num row
+	local i line seg pane num row source age now
 	while IFS= read -r line; do mts+=("$line"); done < <(mtimes "${files[@]}")
 	load_panemap
+	now=$(now_epoch)
 	for i in "${!files[@]}"; do
 		IFS= read -r line <"${files[i]}" || line=""
 		seg=${files[i]##*-}
 		seg=${seg%.txt}
 		if [[ $seg == p* ]]; then num=${seg#p}; else num=${seg:6}; fi
 		pane="%$num"
-		[[ $num =~ ^[0-9]+$ ]] && pane=${PANEMAP[$num]:-$pane}
+		source=""
+		[[ $num =~ ^[0-9]+$ ]] && source=${PANEMAP[$num]:-}
+		[[ -n $source ]] && source="$source · $pane" || source=$pane
+		age=$(format_age "${mts[i]}" "$now")
 		# printf -v into an array element needs bash 4.1; build then assign.
-		row=$(printf '%s  %-16.16s %s' \
-			"$(fmt_epoch "${mts[i]}" '%m-%d %H:%M')" "$pane" "${line:0:58}")
+		row=$(printf '%4s  %-22.22s  %s' "$age" "$source" "${line:0:200}")
 		labels[i]=$row
 		# Clip to the window: a row wider than the terminal wraps, which breaks
 		# the highlight and pushes the hint line off screen. 7 columns cover the
 		# ' %2d  ' index prefix and the trailing space of the selected row.
 		local max=$((cols - 7))
-		((max < 20)) && max=20
+		((max < 1)) && max=1
 		labels[i]=${labels[i]:0:max}
 	done
 
@@ -498,9 +537,9 @@ picker() {
 		printf '\033[H' # home, so a redraw can never drift
 		for i in "${!files[@]}"; do
 			if ((i + 1 == sel)); then
-				printf '\033[7m %2d  %s \033[0m\033[K\n' "$((i + 1))" "${labels[i]}"
+				printf '\033[48;5;33;38;5;255;1m %2d  %s \033[0m\033[K\n' "$((i + 1))" "${labels[i]}"
 			else
-				printf ' %2d  %s\033[K\n' "$((i + 1))" "${labels[i]}"
+				printf '\033[38;5;252m %2d  %s\033[0m\033[K\n' "$((i + 1))" "${labels[i]}"
 			fi
 		done
 		printf '\033[2m 1-9 pick · ↑/↓ move · Enter insert · c copy · q quit\033[0m\033[K\033[J'
@@ -660,11 +699,13 @@ choose)
 	elif [[ -n ${TMUX-} ]]; then
 		# No terminal here (an agent's ! shell mode, a pipe) - draw the picker
 		# in a popup. Height = rows + hint + two border lines.
-		tmux display-popup -E -w 80% -h $((n + 3)) -T ' prompt-watch ' \
-			"$SELF" __popup "$n" "${TMUX_PANE:-}"
+		open_popup "$n" "${TMUX_PANE:-}"
 	else
 		list_plain "$n"
 	fi
+	;;
+__open)
+	open_popup "${2:-10}" "${3:-${TMUX_PANE:-}}" "${4:-}"
 	;;
 __popup)
 	ensure_daemon
@@ -727,6 +768,10 @@ __adopt)
 __prune)
 	prepare_state
 	prune
+	;;
+__age)
+	format_age "${2:-0}" "${3:-$(now_epoch)}"
+	echo
 	;;
 *)
 	usage >&2

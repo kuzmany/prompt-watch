@@ -16,7 +16,7 @@
 set -euo pipefail
 umask 077
 
-VERSION="0.1.0"
+VERSION="0.1.1"
 REPO_RAW="https://raw.githubusercontent.com/kuzmany/prompt-watch/v$VERSION"
 BIN_DIR="$HOME/.local/bin"
 BIN="$BIN_DIR/prompt-watch"
@@ -204,7 +204,7 @@ if confirm "Add the $key picker binding and daemon autostart to $TMUX_CONF?"; th
 	strip_block "$TMUX_CONF"
 	{
 		echo "$MARK_OPEN"
-		echo "bind -n $key display-popup -E -w 80% -h 13 -T ' prompt-watch ' \"$BIN __popup 10 '#{pane_id}'\""
+		echo "bind -n $key run-shell -b \"$BIN __open 10 '#{pane_id}' '#{client_name}'\""
 		echo "run-shell -b \"$BIN ensure\""
 		echo "$MARK_CLOSE"
 	} >>"$TMUX_CONF"

@@ -151,3 +151,11 @@ teardown() {
 
 	[[ $output == *"FAIL  daemon not running"* ]]
 }
+
+@test "picker: relative age uses compact units" {
+	[ "$("$PW" __age 100 100)" = 0s ]
+	[ "$("$PW" __age 41 100)" = 59s ]
+	[ "$("$PW" __age 40 100)" = 1m ]
+	[ "$("$PW" __age 0 3600)" = 1h ]
+	[ "$("$PW" __age 0 86400)" = 1d ]
+}

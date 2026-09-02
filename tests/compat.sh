@@ -35,7 +35,7 @@ echo
 
 if "$SH" -n "$PW"; then check "syntax parses" ok ok; else check "syntax parses" ok broken; fi
 
-check "version" "prompt-watch 0.1.0" "$("$SH" "$PW" version)"
+check "version" "prompt-watch 0.1.1" "$("$SH" "$PW" version)"
 
 check "claude one-line" \
 	"this is a stored one-line claude draft for the parser fixture" \
