@@ -205,6 +205,7 @@ if confirm "Add the $key picker binding and daemon autostart hook to $TMUX_CONF?
 	{
 		echo "$MARK_OPEN"
 		echo "bind -n $key display-popup -E -w 80% -h 13 -T ' prompt-watch ' \"$BIN __popup 10 '#{pane_id}'\""
+		echo "run-shell -b \"$BIN ensure\""
 		echo "set-hook -g session-created 'run-shell -b \"$BIN ensure\"'"
 		echo "$MARK_CLOSE"
 	} >>"$TMUX_CONF"

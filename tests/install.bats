@@ -69,6 +69,7 @@ teardown() {
 	cmp -s "$HOME/.local/bin/prompt-watch" "$ROOT/bin/prompt-watch"
 	! cmp -s "$HOME/.local/bin/prompt-watch" "$BATS_TEST_TMPDIR/cwd/bin/prompt-watch"
 	grep -qF '# >>> prompt-watch >>>' "$HOME/.tmux.conf"
+	grep -Fxq "run-shell -b \"$HOME/.local/bin/prompt-watch ensure\"" "$HOME/.tmux.conf"
 }
 
 @test "upgrade repairs state permissions without a running tmux server" {

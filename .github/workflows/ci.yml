@@ -24,6 +24,7 @@ jobs:
         run: |
           ./install.sh --yes
           tmux new-session -d -s ci
+          sleep 1
           ~/.local/bin/prompt-watch doctor
 
   bash32:
@@ -48,6 +49,7 @@ jobs:
           brew install tmux
           ./install.sh --yes
           tmux new-session -d -s ci
+          sleep 1
           ~/.local/bin/prompt-watch doctor
       - name: live daemon end-to-end
         run: bash tests/e2e.sh
