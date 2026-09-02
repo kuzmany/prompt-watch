@@ -70,6 +70,7 @@ teardown() {
 	! cmp -s "$HOME/.local/bin/prompt-watch" "$BATS_TEST_TMPDIR/cwd/bin/prompt-watch"
 	grep -qF '# >>> prompt-watch >>>' "$HOME/.tmux.conf"
 	grep -Fxq "run-shell -b \"$HOME/.local/bin/prompt-watch ensure\"" "$HOME/.tmux.conf"
+	! grep -qF 'set-hook -g session-created' "$HOME/.tmux.conf"
 }
 
 @test "upgrade repairs state permissions without a running tmux server" {
@@ -124,6 +125,11 @@ EOF
 	[ -s "$HOME/.local/state/prompt-watch/.daemon.pid" ]
 	DAEMON_PID=$(<"$HOME/.local/state/prompt-watch/.daemon.pid")
 	kill -0 "$DAEMON_PID"
+	cat >"$BATS_TEST_TMPDIR/fakebin/ps" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' 'bash $HOME/.local/bin/prompt-watch daemon (bash)'
+EOF
+	chmod +x "$BATS_TEST_TMPDIR/fakebin/ps"
 
 	run bash "$INSTALL" --uninstall --yes
 

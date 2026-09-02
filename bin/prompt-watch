@@ -283,7 +283,10 @@ running_daemon_pid() {
 	case $pid in '' | *[!0-9]*) return 1 ;; esac
 	kill -0 "$pid" 2>/dev/null || return 1
 	args=$(ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
-	[[ $args == "$name daemon" || $args == *"/$name daemon" ]] || return 1
+	case $args in
+	"$name daemon" | "$name daemon "* | *"/$name daemon" | *"/$name daemon "*) ;;
+	*) return 1 ;;
+	esac
 	printf '%s\n' "$pid"
 }
 

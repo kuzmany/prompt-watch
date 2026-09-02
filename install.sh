@@ -24,7 +24,7 @@ STATE_DIR="${PW_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/prompt-watch}"
 MARK_OPEN="# >>> prompt-watch >>>"
 MARK_CLOSE="# <<< prompt-watch <<<"
 
-yes=0 key="M-g" ctrl_g=0 uninstall=0 purge=0
+yes=0 key="M-g" ctrl_g=0 uninstall=0 purge=0 tmux_configured=0
 while (($#)); do
 	case $1 in
 	--yes | -y) yes=1 ;;
@@ -94,7 +94,10 @@ running_daemon_pid() {
 	case $pid in '' | *[!0-9]*) return 1 ;; esac
 	kill -0 "$pid" 2>/dev/null || return 1
 	args=$(ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
-	[[ $args == "prompt-watch daemon" || $args == *"/prompt-watch daemon" ]] || return 1
+	case $args in
+	*"$BIN daemon" | *"$BIN daemon "*) ;;
+	*) return 1 ;;
+	esac
 	printf '%s\n' "$pid"
 }
 
@@ -196,21 +199,17 @@ esac
 
 # --- tmux --------------------------------------------------------------------
 
-if confirm "Add the $key picker binding and daemon autostart hook to $TMUX_CONF?"; then
+if confirm "Add the $key picker binding and daemon autostart to $TMUX_CONF?"; then
 	strip_block "$TMUX_CONF"
-	if [[ -f $TMUX_CONF ]] && grep -q 'set-hook.*session-created' "$TMUX_CONF"; then
-		echo "WARNING: $TMUX_CONF already sets a session-created hook outside"
-		echo "         the prompt-watch block; tmux keeps only one. Merge by hand."
-	fi
 	{
 		echo "$MARK_OPEN"
 		echo "bind -n $key display-popup -E -w 80% -h 13 -T ' prompt-watch ' \"$BIN __popup 10 '#{pane_id}'\""
 		echo "run-shell -b \"$BIN ensure\""
-		echo "set-hook -g session-created 'run-shell -b \"$BIN ensure\"'"
 		echo "$MARK_CLOSE"
 	} >>"$TMUX_CONF"
+	tmux_configured=1
 	tmux source-file "$TMUX_CONF" 2>/dev/null || true
-	echo "tmux: $key opens the picker; the daemon starts with every new session."
+	echo "tmux: $key opens the picker; the daemon starts with tmux."
 fi
 
 # --- optional Ctrl+G exact copy ---------------------------------------------
@@ -229,8 +228,11 @@ if ((ctrl_g)); then
 fi
 
 if tmux list-sessions >/dev/null 2>&1; then
-	"$BIN" ensure
-	sleep 1 # give the detached daemon a beat before doctor checks its pidfile
+	((tmux_configured)) || "$BIN" ensure
+	for _ in 1 2 3 4 5; do
+		[[ -s $STATE_DIR/.daemon.pid ]] && break
+		sleep 1
+	done
 	echo
 	if out=$("$BIN" doctor 2>&1); then
 		echo "Done. Press $key inside tmux to get a lost prompt back."
