@@ -16,7 +16,8 @@
 set -euo pipefail
 umask 077
 
-REPO_RAW="https://raw.githubusercontent.com/kuzmany/prompt-watch/main"
+VERSION="0.1.0"
+REPO_RAW="https://raw.githubusercontent.com/kuzmany/prompt-watch/v$VERSION"
 BIN_DIR="$HOME/.local/bin"
 BIN="$BIN_DIR/prompt-watch"
 TMUX_CONF="$HOME/.tmux.conf"

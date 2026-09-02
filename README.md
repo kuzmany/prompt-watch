@@ -21,7 +21,7 @@ can always get it back.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash -s -- --yes
+curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/v0.1.0/install.sh | bash -s -- --yes
 ```
 
 Needs tmux (`brew install tmux` / `apt install tmux`). Nothing else — it
@@ -40,8 +40,9 @@ Then press **Alt+G** inside tmux. That's the whole tool.
 
 - **Alt+G** — your last 10 drafts. `1`–`9` or `↑`/`↓` picks one,
   **Enter** puts it back into the prompt, `c` copies it, `q` quits.
-- Anything you type is saved within 10 seconds and kept as plain text in
-  `~/.local/state/prompt-watch/` — same exposure as your shell history.
+- Drafts of 15+ characters are captured on the next 10-second scan and kept
+  as plain text in `~/.local/state/prompt-watch/` — same exposure as your shell
+  history.
 - Something feels off? `prompt-watch doctor` tells you what.
 
 <details>
@@ -56,9 +57,9 @@ the prompt box of AI agent panes in tmux so an unsent prompt survives a crash.
 
 1. Check the prerequisite first: `tmux -V` (any version with popups, 3.2+).
    Say so and stop if tmux is missing.
-2. Read https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh
+2. Read https://raw.githubusercontent.com/kuzmany/prompt-watch/v0.1.0/install.sh
    before running anything, and tell me what it changes. Then install with:
-   `curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash -s -- --yes`
+   `curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/v0.1.0/install.sh | bash -s -- --yes`
    Append `--ctrl-g` to that command only if I use Claude Code and want Ctrl+G
    to copy the exact prompt buffer (it adds one alias to my shell rc).
 3. Run `~/.local/bin/prompt-watch doctor` and show me the output. Every line
