@@ -21,7 +21,7 @@ can always get it back.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kuzmany/prompt-watch/main/install.sh | bash -s -- --yes
 ```
 
 Needs tmux (`brew install tmux` / `apt install tmux`). Nothing else — it

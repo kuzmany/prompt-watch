@@ -8,6 +8,10 @@ setup() {
 	mkdir -p "$PW_DIR"
 }
 
+teardown() {
+	[[ -z ${OTHER_PID:-} ]] || kill "$OTHER_PID" 2>/dev/null || true
+}
+
 # --- claude parser -----------------------------------------------------------
 
 @test "claude: one-line draft extracted exactly" {
@@ -125,4 +129,25 @@ setup() {
 	run "$PW" __parse claude <"$FIX/claude-try-prefix.txt"
 	[ "$status" -eq 0 ]
 	[ "$output" = 'Try "refactor" and then rewrite the parser' ]
+}
+
+@test "state: existing directory and drafts become private" {
+	printf 'private prompt draft\n' >"$PW_DIR/f1.txt"
+	chmod 755 "$PW_DIR"
+	chmod 644 "$PW_DIR/f1.txt"
+
+	run "$PW" doctor
+
+	[ "$(stat -c %a "$PW_DIR")" = 700 ]
+	[ "$(stat -c %a "$PW_DIR/f1.txt")" = 600 ]
+}
+
+@test "doctor: unrelated live pid is not a daemon" {
+	sleep 60 &
+	OTHER_PID=$!
+	printf '%s\n' "$OTHER_PID" >"$PW_DIR/.daemon.pid"
+
+	run "$PW" doctor
+
+	[[ $output == *"FAIL  daemon not running"* ]]
 }

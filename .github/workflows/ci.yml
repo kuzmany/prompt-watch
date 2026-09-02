@@ -15,7 +15,7 @@ jobs:
       - name: bats
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q bats tmux
-          bats tests/run.bats
+          bats tests/run.bats tests/install.bats
       - name: compat suite
         run: bash tests/compat.sh
       - name: live daemon end-to-end
@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: installer syntax under bash 3.2
+        run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash -n install.sh bin/prompt-watch
       - name: compat suite under bash 3.2
         run: docker run --rm -v "$PWD:/w" -w /w bash:3.2 bash tests/compat.sh
 

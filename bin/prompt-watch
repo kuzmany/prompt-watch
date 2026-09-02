@@ -26,6 +26,7 @@
 # shellcheck disable=SC2012
 
 set -uo pipefail
+umask 077
 
 VERSION="0.1.0"
 
@@ -211,6 +212,16 @@ parse_box_codex() {
 
 # --------------------------------------------------------------- storage ----
 
+prepare_state() {
+	local f
+	mkdir -p "$dir" || return 1
+	chmod 700 "$dir" || return 1
+	for f in "$dir"/*.txt "$dir"/.daemon.pid "$dir"/.panemap "$dir"/.panemap.tmp; do
+		[[ -e $f ]] || continue
+		chmod 600 "$f" || return 1
+	done
+}
+
 # GNU vs BSD stat, detected once; the only stat use, kept portable.
 if stat -c '%Y' / >/dev/null 2>&1; then
 	mtimes() { stat -c '%Y' -- "$@"; }
@@ -265,21 +276,33 @@ to_clipboard() {
 # Cheap check on every entry point, so the daemon self-heals. The tmux
 # session-created hook written by the installer covers the time before the
 # first prompt-watch invocation.
+running_daemon_pid() {
+	local pid args name=${SELF##*/}
+	[[ -r $dir/.daemon.pid ]] || return 1
+	IFS= read -r pid <"$dir/.daemon.pid" || return 1
+	case $pid in '' | *[!0-9]*) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	args=$(ps -ww -p "$pid" -o args= 2>/dev/null) || return 1
+	[[ $args == "$name daemon" || $args == *"/$name daemon" ]] || return 1
+	printf '%s\n' "$pid"
+}
+
 ensure_daemon() {
 	local pidfile="$dir/.daemon.pid"
-	[[ -r $pidfile ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null && return 0
-	mkdir -p "$dir" 2>/dev/null || return 1
+	prepare_state 2>/dev/null || return 1
+	running_daemon_pid >/dev/null && return 0
+	rm -f "$pidfile"
 	spawn_detached "$SELF" daemon
 }
 
 daemon_loop() {
-	mkdir -p "$dir" || exit 1
+	prepare_state || exit 1
 
 	# Two guards, because the pidfile alone is not enough: delete it while a
 	# daemon is alive and a second one starts happily. The process-table scan
 	# is skipped when PW_DIR is overridden - tests run isolated instances.
 	local pidfile="$dir/.daemon.pid"
-	if [[ -r $pidfile ]] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
+	if running_daemon_pid >/dev/null; then
 		exit 0 # already running
 	fi
 	if [[ -z ${PW_DIR:-} ]] && ps -eo pid,args | awk -v me=$$ \
@@ -566,14 +589,14 @@ doctor() {
 		rc=1
 	fi
 
-	if mkdir -p "$dir" 2>/dev/null && [[ -w $dir ]]; then
+	if prepare_state 2>/dev/null && [[ -w $dir ]]; then
 		echo "ok    state dir writable: $dir"
 	else
 		echo "FAIL  state dir not writable: $dir"
 		rc=1
 	fi
 
-	if [[ -r $pidfile ]] && pid=$(cat "$pidfile" 2>/dev/null) && kill -0 "$pid" 2>/dev/null; then
+	if pid=$(running_daemon_pid); then
 		echo "ok    daemon running (pid $pid)"
 	else
 		echo "FAIL  daemon not running - any prompt-watch call starts it; check the tmux hook"
@@ -699,7 +722,7 @@ __adopt)
 	adopt_file "${2-}" && echo
 	;;
 __prune)
-	mkdir -p "$dir"
+	prepare_state
 	prune
 	;;
 *)
